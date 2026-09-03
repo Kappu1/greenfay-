@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GreenFay Contract Farming</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div id="login" class="login-wrap">
+  <form id="loginForm" class="login-card">
+    <div class="brand-mark">GF</div>
+    <h1>GreenFay Farm Foods</h1>
+    <p>Contract Farming Operations</p>
+    <label>Email</label><input id="email" value="admin@greenfay.local">
+    <label>Password</label><input id="password" type="password" value="admin123">
+    <button type="submit">Sign in</button>
+    <small>Demo: admin@greenfay.local / admin123</small>
+    <div id="loginError" class="error"></div>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <aside>
+    <div class="brand">
+      <div class="brand-mark small">GF</div>
+      <div><b>GreenFay</b><span>Contract Farming</span></div>
+    </div>
+    <nav id="nav">
+      <div class="nav-group-label">Operations</div>
+      <button data-page="dashboard">📊 Dashboard</button>
+      <button data-page="farmers">👨‍🌾 Farmers</button>
+      <button data-page="bookings">📋 Bookings</button>
+      <button data-page="contracts">📦 Contract Due</button>
+      <button data-page="seed">🌱 Seed & Payments</button>
+      <button data-page="bardana">🛍 Bardana</button>
+      <button data-page="dispatch">🚛 Dispatch</button>
+      <div class="nav-group-label">Administration</div>
+      <button data-page="masters">⚙️ Master Data</button>
+      <button data-page="tax">🧾 Mandi Tax</button>
+      <button data-page="reports">📄 Reports</button>
+      <button data-page="audit">📝 Audit Trail</button>
+    </nav>
+    <div class="side-bottom">
+      <span id="userName"></span>
+      <button id="logoutBtn">Logout</button>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <div>
+        <div class="eyebrow">GREEN FAY FARM FOODS</div>
+        <h2 id="pageTitle">Dashboard</h2>
+      </div>
+      <div class="season" id="seasonBadge">Season 2025–26</div>
+    </header>
+    <section id="content"></section>
+  </main>
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
