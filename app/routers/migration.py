@@ -743,3 +743,4 @@ def rollback_batch(
     db.commit()
 
     return {'ok': True, 'rolled_back_bookings': len(booking_ids)}
+

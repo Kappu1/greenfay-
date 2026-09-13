@@ -114,3 +114,4 @@ async def user_change_password(request: Request, db: Session = Depends(get_db), 
     audit(db, user, 'User', user.id, 'CHANGE_PASSWORD', 'User changed their own password', module='Users')
     db.commit()
     return {'ok': True, 'message': 'Password updated successfully'}
+

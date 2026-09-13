@@ -204,3 +204,4 @@ def test_excel_migration_staged_workflow(client):
     rb_res = client.post(f'/api/migration/batches/{batch_id}/rollback')
     assert rb_res.status_code == 200
     assert rb_res.json()['rolled_back_bookings'] == 2
+
