@@ -2,19 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GreenFay Contract Farming</title>
+<title>GreenFay Contract Farming Platform</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <div id="login" class="login-wrap">
-  <form id="loginForm" class="login-card">
+  <form id="loginForm" class="login-card" autocomplete="off">
     <div class="brand-mark">GF</div>
     <h1>GreenFay Farm Foods</h1>
-    <p>Contract Farming Operations</p>
-    <label>Email</label><input id="email" value="admin@greenfay.local">
-    <label>Password</label><input id="password" type="password" value="admin123">
-    <button type="submit">Sign in</button>
-    <small>Demo: admin@greenfay.local / admin123</small>
+    <p>Potato Contract Farming Platform</p>
+    <label for="email">Email Address</label>
+    <input id="email" type="email" required placeholder="name@greenfay.com" autocomplete="username">
+    <label for="password">Password</label>
+    <input id="password" type="password" required placeholder="Enter password" autocomplete="current-password">
+    <button type="submit" id="loginSubmitBtn">Sign in</button>
     <div id="loginError" class="error"></div>
   </form>
 </div>
@@ -23,7 +24,7 @@
   <aside>
     <div class="brand">
       <div class="brand-mark small">GF</div>
-      <div><b>GreenFay</b><span>Contract Farming</span></div>
+      <div><b>GreenFay</b><span>Contract Farming v3.0</span></div>
     </div>
     <nav id="nav">
       <div class="nav-group-label">Operations</div>
@@ -38,29 +39,37 @@
       <button data-page="masters">⚙️ Master Data</button>
       <button data-page="tax">🧾 Mandi Tax</button>
       <button data-page="reports">📄 Reports</button>
+      <button data-page="migration">📥 Data Migration</button>
+      <button data-page="users">👥 User Management</button>
       <button data-page="audit">📝 Audit Trail</button>
     </nav>
     <div class="side-bottom">
-      <span id="userName"></span>
-      <button id="logoutBtn">Logout</button>
+      <div class="user-meta">
+        <b id="userName"></b>
+        <span id="userRole" class="tag sm grey"></span>
+      </div>
+      <div class="user-actions">
+        <button id="changePwBtn" class="btn sm ghost" onclick="openChangePasswordModal()">🔑 Change Password</button>
+        <button id="logoutBtn" class="btn sm ghost">🚪 Logout</button>
+      </div>
     </div>
   </aside>
 
   <main>
     <header>
-      <div>
+      <div class="header-left">
         <div class="eyebrow">GREEN FAY FARM FOODS</div>
         <h2 id="pageTitle">Dashboard</h2>
       </div>
-      <div class="season" id="seasonBadge">Season 2025–26</div>
+      <div class="header-right">
+        <div class="season" id="seasonBadge">Active Season: —</div>
+      </div>
     </header>
     <section id="content"></section>
   </main>
 </div>
 
-<!-- Toast container -->
 <div id="toastContainer"></div>
-
 <script src="/static/app.js"></script>
 </body>
 </html>

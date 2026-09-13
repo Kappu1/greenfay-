@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
+import re
 from app.database import get_db
 from app.models import Farmer, Booking, SeedIssue, SeedPayment, BardanaIssue, DispatchLine, Commitment, AuditLog, Dispatch
-from app.auth import current_user, audit, code
+from app.auth import current_user, require_roles, audit, code
 
 router = APIRouter()
 
@@ -36,13 +37,15 @@ def list_farmers(q: str = '', village: str = '', active: bool = None, page: int 
     return {"items": result, "total": total, "page": page, "per_page": per_page, "pages": (total + per_page - 1) // per_page}
 
 @router.post('/farmers')
-async def create_farmer(request: Request, db: Session = Depends(get_db), user = Depends(current_user)):
+async def create_farmer(request: Request, db: Session = Depends(get_db), user = Depends(require_roles('admin', 'operator'))):
     data = await request.json()
     name = data.get('name')
     mobile = data.get('mobile')
     village = data.get('village')
     
     if not name: raise HTTPException(400, 'Farmer name required')
+    if mobile and not re.match(r'^[6-9]\d{9}$', mobile.strip()):
+        raise HTTPException(400, 'Invalid mobile number: must be 10 digits starting with 6, 7, 8, or 9')
     
     if not data.get('force'):
         dups = check_farmer_duplicates(db, name, mobile, village)

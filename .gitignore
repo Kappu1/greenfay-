@@ -13,12 +13,15 @@ __pycache__/
 # Environment variables
 .env
 
-# Backups
+# Backups & Uploads
 *_backup*.db
+backups/
+uploads/
 
 # OS / Editor files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+
 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app.models import SeedIssue, SeedPayment, Farmer, Booking, SeedRateMaster
-from app.auth import current_user, audit
+from app.auth import current_user, require_roles, audit, check_season_unlocked
 from datetime import date, datetime
 
 router = APIRouter()
@@ -28,35 +28,54 @@ def list_seed_issues(farmer_id: int = None, booking_id: int = None, variety: str
             'farmer_id': s.farmer_id, 'farmer_name': db.get(Farmer, s.farmer_id).name if s.farmer_id else '',
             'booking_id': s.booking_id, 'variety': s.variety, 'issue_date': str(s.issue_date),
             'packets': s.packets, 'rate': s.rate_per_packet, 'total_value': s.total_value,
-            'paid': paid, 'balance': bal, 'status': s.status, 'payment_status': p_status
+            'paid': paid, 'balance': bal, 'status': s.status, 'payment_status': p_status,
+            'version_id': s.version_id or 1
         })
     return out
 
 @router.post('/issues')
-async def create_seed_issue(request: Request, db: Session = Depends(get_db), user = Depends(current_user)):
+async def create_seed_issue(request: Request, db: Session = Depends(get_db), user = Depends(require_roles('admin', 'seed', 'operator', 'accounts'))):
     d = await request.json()
     packets = float(d.get('packets', 0))
     rate = float(d.get('rate_per_packet', 0))
+    if packets <= 0: raise HTTPException(400, 'Packets must be greater than 0')
+
+    b = db.get(Booking, int(d.get('booking_id', 0)))
+    if not b: raise HTTPException(400, 'Valid booking required')
+    check_season_unlocked(db, b.season_id or b.season)
+
+    issue_dt = date.fromisoformat(d.get('issue_date') or str(date.today()))
+
+    # Check duplicate entry
+    if not d.get('force'):
+        existing_dup = db.query(SeedIssue).filter(
+            SeedIssue.booking_id == b.id,
+            SeedIssue.variety == d['variety'],
+            SeedIssue.issue_date == issue_dt,
+            SeedIssue.packets == packets,
+            SeedIssue.status == 'Active'
+        ).first()
+        if existing_dup:
+            raise HTTPException(400, f"Duplicate seed issue detected: {packets} packets of {d['variety']} already issued on {issue_dt}. Add force=true to proceed.")
     
     # Auto-lookup rate if not provided
     if not rate and d.get('variety_id') and d.get('season_id'):
-        dt = date.fromisoformat(d.get('issue_date') or str(date.today()))
         r = db.query(SeedRateMaster).filter(
             SeedRateMaster.variety_id == d['variety_id'],
             SeedRateMaster.season_id == d['season_id'],
             SeedRateMaster.active == True,
-            SeedRateMaster.effective_from <= dt,
-            (SeedRateMaster.effective_to == None) | (SeedRateMaster.effective_to >= dt)
+            SeedRateMaster.effective_from <= issue_dt,
+            (SeedRateMaster.effective_to == None) | (SeedRateMaster.effective_to >= issue_dt)
         ).order_by(SeedRateMaster.effective_from.desc()).first()
         if r: rate = r.rate_per_packet
     
     s = SeedIssue(
-        booking_id=int(d['booking_id']),
+        booking_id=b.id,
         farmer_id=int(d['farmer_id']),
         booking_variety_id=d.get('booking_variety_id'),
         supplier_id=d.get('supplier_id'),
         variety=d['variety'],
-        issue_date=date.fromisoformat(d.get('issue_date') or str(date.today())),
+        issue_date=issue_dt,
         packets=packets,
         packet_weight_kg=float(d.get('packet_weight_kg', 0)),
         rate_per_packet=rate,

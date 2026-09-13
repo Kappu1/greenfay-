@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.database import get_db
 from app.models import (Season, Village, Variety, Destination, Supplier, SeedRateMaster, BuybackRateMaster,
-                        BardanaType, Transporter, TaxRate)
-from app.auth import current_user, audit
-from datetime import date
+                        BardanaType, Transporter, TaxRate, SystemSetting, User)
+from app.auth import current_user, require_roles, audit
+from datetime import date, datetime
 
 router = APIRouter()
 
@@ -52,13 +52,54 @@ async def update_season(id: int, request: Request, db: Session = Depends(get_db)
     return obj
 
 @router.delete('/seasons/{id}')
-def delete_season(id: int, db: Session = Depends(get_db), user = Depends(current_user)):
+def delete_season(id: int, db: Session = Depends(get_db), user = Depends(require_roles('admin'))):
     obj = db.get(Season, id)
     if not obj: raise HTTPException(404, 'Not found')
     db.delete(obj)
     db.commit()
     audit(db, user, 'Season', id, 'DELETE', obj.name)
     return {'ok': True}
+
+@router.post('/seasons/{id}/lock')
+async def lock_season(id: int, request: Request, db: Session = Depends(get_db), admin = Depends(require_roles('admin'))):
+    data = await request.json()
+    reason = data.get('reason', 'Season completed and finalized')
+    s = db.get(Season, id)
+    if not s: raise HTTPException(404, 'Season not found')
+    s.status = 'Locked'
+    s.locked_by_id = admin.id
+    s.locked_at = datetime.utcnow()
+    s.lock_reason = reason
+    audit(db, admin, 'Season', s.id, 'LOCK', f"Locked season: {reason}", module='Masters')
+    db.commit()
+    return {'ok': True, 'status': s.status}
+
+@router.post('/seasons/{id}/unlock')
+async def unlock_season(id: int, request: Request, db: Session = Depends(get_db), admin = Depends(require_roles('admin'))):
+    data = await request.json()
+    reason = data.get('reason', '')
+    if not reason.strip():
+        raise HTTPException(400, 'A mandatory reason is required to unlock a season')
+    s = db.get(Season, id)
+    if not s: raise HTTPException(404, 'Season not found')
+    s.status = 'Open'
+    s.locked_by_id = None
+    s.locked_at = None
+    s.lock_reason = None
+    audit(db, admin, 'Season', s.id, 'UNLOCK', f"Unlocked season: {reason}", module='Masters')
+    db.commit()
+    return {'ok': True, 'status': s.status}
+
+@router.post('/seasons/{id}/set-active')
+def set_active_season(id: int, db: Session = Depends(get_db), admin = Depends(require_roles('admin'))):
+    s = db.get(Season, id)
+    if not s: raise HTTPException(404, 'Season not found')
+    # Deactivate others
+    db.query(Season).filter(Season.id != id).update({'active': False})
+    s.active = True
+    audit(db, admin, 'Season', s.id, 'SET_ACTIVE', f"Set active season to {s.name}", module='Masters')
+    db.commit()
+    return {'ok': True, 'active_season': s.name}
 
 # Villages
 @router.get('/villages')
@@ -455,5 +496,38 @@ def delete_tax_rate(id: int, db: Session = Depends(get_db), user = Depends(curre
     obj = db.get(TaxRate, id)
     if not obj: raise HTTPException(404, 'Not found')
     db.delete(obj)
+    db.commit()
+    return {'ok': True}
+
+# System Settings
+@router.get('/settings')
+def get_system_settings(db: Session = Depends(get_db), user = Depends(current_user)):
+    settings = db.query(SystemSetting).all()
+    defaults = {
+        'company_name': 'Green Fay Farm Foods',
+        'default_currency': '₹',
+        'default_weight_unit': 'Kg',
+        'default_bag_capacity': '50',
+        'tax_quintal_divisor': '100',
+        'date_format': 'DD-MM-YYYY',
+        'max_upload_size_mb': '10',
+        'contact_phone': '+91 98765 43210'
+    }
+    out = dict(defaults)
+    for s in settings:
+        out[s.key] = s.value
+    return out
+
+@router.put('/settings')
+async def update_system_settings(request: Request, db: Session = Depends(get_db), admin = Depends(require_roles('admin'))):
+    d = await request.json()
+    for k, v in d.items():
+        s = db.query(SystemSetting).filter(SystemSetting.key == k).first()
+        if not s:
+            s = SystemSetting(key=k, value=str(v))
+            db.add(s)
+        else:
+            s.value = str(v)
+    audit(db, admin, 'SystemSetting', 0, 'UPDATE', 'Updated system settings', module='Settings')
     db.commit()
     return {'ok': True}

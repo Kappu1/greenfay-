@@ -3,14 +3,18 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
 from app.models import Booking, Farmer, BookingVariety, Commitment, DispatchLine, Dispatch, Season
-from app.auth import current_user, audit, code
+from app.auth import current_user, require_roles, audit, code, check_season_unlocked
 from datetime import date, datetime
 
 router = APIRouter()
 
+def get_default_season(db: Session):
+    s = db.query(Season).filter(Season.active == True).first()
+    return (s.name, s.id) if s else ('2025-26', None)
+
 @router.get('/bookings/seasons')
 def list_unique_seasons(db: Session = Depends(get_db), user = Depends(current_user)):
-    return [s.name for s in db.query(Season).filter(Season.active == True).order_by(Season.start_date.desc()).all()]
+    return [s.name for s in db.query(Season).order_by(Season.start_date.desc()).all()]
 
 @router.get('/bookings')
 def list_bookings(farmer_id: int = None, season: str = '', status: str = '', booking_type: str = '', db: Session = Depends(get_db), user = Depends(current_user)):
@@ -22,16 +26,21 @@ def list_bookings(farmer_id: int = None, season: str = '', status: str = '', boo
     
     rows = []
     for b in q.order_by(Booking.id.desc()).all():
-        rows.append({'id': b.id, 'booking_code': b.booking_code, 'farmer_id': b.farmer_id, 'farmer': b.farmer.name if b.farmer else '', 'season': b.season, 'booking_date': str(b.booking_date), 'agreement_no': b.agreement_no, 'booking_type': b.booking_type, 'total_acres': b.total_acres, 'destination': b.destination, 'status': b.status})
+        rows.append({'id': b.id, 'booking_code': b.booking_code, 'farmer_id': b.farmer_id, 'farmer': b.farmer.name if b.farmer else '', 'season': b.season, 'booking_date': str(b.booking_date), 'agreement_no': b.agreement_no, 'booking_type': b.booking_type, 'total_acres': b.total_acres, 'destination': b.destination, 'status': b.status, 'version_id': b.version_id or 1})
     return rows
 
 @router.post('/bookings')
-async def create_booking(request: Request, db: Session = Depends(get_db), user = Depends(current_user)):
+async def create_booking(request: Request, db: Session = Depends(get_db), user = Depends(require_roles('admin', 'operator'))):
     d = await request.json()
     farmer = db.get(Farmer, int(d.get('farmer_id', 0)))
     if not farmer: raise HTTPException(400, 'Valid farmer required')
     
-    season = d.get('season', '2025-26')
+    default_name, default_id = get_default_season(db)
+    season = d.get('season') or default_name
+    season_id = d.get('season_id') or default_id
+    
+    check_season_unlocked(db, season_id or season)
+    
     agreement_no = d.get('agreement_no')
     if agreement_no:
         existing = db.query(Booking).filter(Booking.season == season, Booking.agreement_no == agreement_no).first()
@@ -42,10 +51,14 @@ async def create_booking(request: Request, db: Session = Depends(get_db), user =
     varieties = d.get('varieties') or []
     commitments = d.get('commitments') or []
     
+    total_acres = float(d.get('total_acres') or sum(float(x.get('acres', 0)) for x in varieties))
+    if total_acres < 0:
+        raise HTTPException(400, 'Total acres cannot be negative')
+    
     b = Booking(
         farmer_id=farmer.id,
         season=season,
-        season_id=d.get('season_id'),
+        season_id=season_id,
         booking_date=date.fromisoformat(d.get('booking_date') or str(date.today())),
         agreement_no=agreement_no,
         receipt_no=d.get('receipt_no'),
@@ -135,27 +148,35 @@ def booking_detail(id: int, db: Session = Depends(get_db), user = Depends(curren
     }
 
 @router.put('/bookings/{id}')
-async def update_booking_header(id: int, request: Request, db: Session = Depends(get_db), user = Depends(current_user)):
+async def update_booking_header(id: int, request: Request, db: Session = Depends(get_db), user = Depends(require_roles('admin', 'operator'))):
     d = await request.json()
     b = db.get(Booking, id)
     if not b: raise HTTPException(404, 'Booking not found')
+    check_season_unlocked(db, b.season_id or b.season)
+    
+    if 'version_id' in d and b.version_id and int(d['version_id']) != b.version_id:
+        raise HTTPException(409, 'This booking was modified by another user. Please refresh before saving.')
     
     for k, v in d.items():
-        if hasattr(b, k) and k not in ['id', 'booking_code', 'farmer_id', 'created_at', 'created_by_id']:
+        if hasattr(b, k) and k not in ['id', 'booking_code', 'farmer_id', 'created_at', 'created_by_id', 'version_id']:
             setattr(b, k, v)
+    b.version_id = (b.version_id or 1) + 1
     b.updated_by_id = user.id
     b.updated_at = datetime.utcnow()
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "version_id": b.version_id}
 
 @router.put('/bookings/{id}/status')
-async def update_booking_status(id: int, request: Request, db: Session = Depends(get_db), user = Depends(current_user)):
+async def update_booking_status(id: int, request: Request, db: Session = Depends(get_db), user = Depends(require_roles('admin', 'operator'))):
     d = await request.json()
     b = db.get(Booking, id)
     if not b: raise HTTPException(404, 'Booking not found')
+    check_season_unlocked(db, b.season_id or b.season)
     b.status = d.get('status', 'Active')
+    b.version_id = (b.version_id or 1) + 1
     b.updated_by_id = user.id
     b.updated_at = datetime.utcnow()
+    audit(db, user, 'Booking', b.id, 'STATUS_CHANGE', f"Changed booking status to {b.status}", module='Bookings')
     db.commit()
     return {"ok": True}
 

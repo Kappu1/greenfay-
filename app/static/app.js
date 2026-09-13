@@ -73,14 +73,23 @@ document.getElementById('loginForm').onsubmit = async e => {
   e.preventDefault();
   const err = document.getElementById('loginError');
   err.textContent = '';
+  const subBtn = document.getElementById('loginSubmitBtn');
+  if (subBtn) { subBtn.disabled = true; subBtn.textContent = 'Signing in...'; }
   try {
     const x = await api('/api/login', { method: 'POST', body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('password').value }) });
     me = x.user;
     showApp();
     document.getElementById('userName').textContent = me.name;
+    const rBadge = document.getElementById('userRole');
+    if (rBadge) rBadge.textContent = (me.role || 'operator').toUpperCase();
     await loadMasterCache();
+    updateSeasonBadge();
     page('dashboard');
-  } catch (ex) { err.textContent = ex.message; }
+  } catch (ex) {
+    err.textContent = ex.message;
+  } finally {
+    if (subBtn) { subBtn.disabled = false; subBtn.textContent = 'Sign in'; }
+  }
 };
 
 document.getElementById('logoutBtn').onclick = async () => {
@@ -95,11 +104,26 @@ async function init() {
     me = await api('/api/me');
     showApp();
     document.getElementById('userName').textContent = me.name;
+    const rBadge = document.getElementById('userRole');
+    if (rBadge) rBadge.textContent = (me.role || 'operator').toUpperCase();
     await loadMasterCache();
+    updateSeasonBadge();
     page('dashboard');
   } catch { showLogin(); }
 }
 init();
+
+function updateSeasonBadge() {
+  const badge = document.getElementById('seasonBadge');
+  if (!badge) return;
+  const activeS = (masterCache.seasons || []).find(s => s.active);
+  if (activeS) {
+    const isLocked = activeS.status === 'Locked' || activeS.status === 'Archived';
+    badge.innerHTML = `Active Season: <b>${activeS.name}</b> <span class="tag ${isLocked ? 'red' : 'green'}">${activeS.status || 'Open'}</span>`;
+  } else {
+    badge.innerHTML = `Active Season: <i>None</i>`;
+  }
+}
 
 // ==================== MASTER CACHE ====================
 async function loadMasterCache() {
@@ -149,6 +173,8 @@ const PAGES = {
   masters: ['Master Data', mastersPage],
   tax: ['Mandi Tax & Vikas Sulk', taxPage],
   reports: ['Reports & Exports', reportsPage],
+  migration: ['Data Migration Center', migrationPage],
+  users: ['User Management', usersPage],
   audit: ['Audit Trail', auditPage]
 };
 
@@ -179,7 +205,26 @@ async function dashboardPage() {
     ['Vikas Sulk', money(d.vikas_sulk), '🧾']
   ];
   const pct_delivered = d.contracted_bags > 0 ? Math.min(100, d.delivered_bags / d.contracted_bags * 100) : 0;
+  
+  let alertsHtml = '';
+  if (d.alerts) {
+    const alerts = [];
+    if (d.alerts.due_this_month > 0) {
+      alerts.push(`<div class="alert-item warn"><span>📦 <b>${d.alerts.due_this_month} Month-wise Commitments</b> are scheduled for procurement this month.</span><button class="btn sm" onclick="page('contracts')">View Due</button></div>`);
+    }
+    if (d.alerts.draft_dispatches > 0) {
+      alerts.push(`<div class="alert-item info"><span>🚛 <b>${d.alerts.draft_dispatches} Draft Dispatches</b> await quality check & finalization.</span><button class="btn sm" onclick="page('dispatch')">View Dispatches</button></div>`);
+    }
+    if (d.seed_outstanding > 0) {
+      alerts.push(`<div class="alert-item warn"><span>💰 <b>${money(d.seed_outstanding)} Seed Payment Outstanding</b> across growers.</span><button class="btn sm" onclick="page('seed')">View Ledger</button></div>`);
+    }
+    if (alerts.length) {
+      alertsHtml = `<div class="dashboard-alerts">${alerts.join('')}</div>`;
+    }
+  }
+
   content().innerHTML = `
+    ${alertsHtml}
     <div class="grid cards">${cards.map(([label, val, icon]) => `
       <div class="card">
         <small>${icon} ${label}</small>
@@ -1238,16 +1283,60 @@ async function loadMasterSection(section) {
 async function renderSeasons() {
   const rows = await api('/api/masters/seasons');
   return `<div class="panel">
-    <div class="panel-head"><div><h3>Seasons</h3></div><button class="btn green" onclick="openSeasonModal()">+ Add Season</button></div>
-    <table><thead><tr><th>Name</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
+    <div class="panel-head"><div><h3>Seasons</h3><p>Configure agricultural seasons, active operational season, and lock historical seasons</p></div><button class="btn green" onclick="openSeasonModal()">+ Add Season</button></div>
+    <div class="table-wrap">
+    <table><thead><tr><th>Name</th><th>Start</th><th>End</th><th>Active Status</th><th>Lock State</th><th>Actions</th></tr></thead>
     <tbody>${rows.map(r => `<tr>
-      <td><b>${r.name}</b></td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td>
-      <td>${statusTag(r.active ? 'Active' : 'Inactive')}</td>
-      <td><button class="btn sm" onclick="editSeason(${r.id},'${r.name}')">Edit</button></td>
+      <td><b>${r.name}</b></td>
+      <td>${fmtDate(r.start_date)}</td>
+      <td>${fmtDate(r.end_date)}</td>
+      <td>${r.active ? '<span class="tag green">ACTIVE</span>' : '<span class="tag grey">Inactive</span>'}</td>
+      <td><span class="tag ${r.status === 'Locked' ? 'red' : 'green'}">${r.status || 'Open'}</span></td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap;">
+        ${!r.active ? `<button class="btn sm ghost" onclick="makeSeasonActive(${r.id})">Set Active</button>` : ''}
+        ${r.status === 'Locked'
+          ? `<button class="btn sm ghost" style="color:var(--amber);" onclick="unlockSeason(${r.id})">🔓 Unlock</button>`
+          : `<button class="btn sm ghost" style="color:var(--red);" onclick="lockSeason(${r.id})">🔒 Lock</button>`}
+        <button class="btn sm ghost" onclick="editSeason(${r.id},'${r.name}')">Edit</button>
+      </td>
     </tr>`).join('')}
-    ${!rows.length ? '<tr><td colspan="5"><div class="empty-state"><p>No seasons</p></div></td></tr>' : ''}
-    </tbody></table></div>`;
+    ${!rows.length ? '<tr><td colspan="6"><div class="empty-state"><p>No seasons</p></div></td></tr>' : ''}
+    </tbody></table></div></div>`;
 }
+
+window.makeSeasonActive = async id => {
+  try {
+    await api(`/api/masters/seasons/${id}/set-active`, { method: 'POST' });
+    toast('Active season updated');
+    await loadMasterCache();
+    updateSeasonBadge();
+    await loadMasterSection('Seasons');
+  } catch (ex) { toast(ex.message, 'error'); }
+};
+
+window.lockSeason = async id => {
+  const reason = prompt('Enter reason for locking this season:', 'Operational closing & audit finalization');
+  if (!reason) return;
+  try {
+    await api(`/api/masters/seasons/${id}/lock`, { method: 'POST', body: JSON.stringify({ reason }) });
+    toast('Season locked successfully');
+    await loadMasterCache();
+    updateSeasonBadge();
+    await loadMasterSection('Seasons');
+  } catch (ex) { toast(ex.message, 'error'); }
+};
+
+window.unlockSeason = async id => {
+  const reason = prompt('MANDATORY: Enter audit reason to unlock this season:');
+  if (!reason || !reason.trim()) { alert('Unlock reason is mandatory'); return; }
+  try {
+    await api(`/api/masters/seasons/${id}/unlock`, { method: 'POST', body: JSON.stringify({ reason }) });
+    toast('Season unlocked');
+    await loadMasterCache();
+    updateSeasonBadge();
+    await loadMasterSection('Seasons');
+  } catch (ex) { toast(ex.message, 'error'); }
+};
 
 window.openSeasonModal = (existing = null) => {
   const m = modal(`
@@ -1841,3 +1930,650 @@ async function auditPage() {
       </div>
     </div>`;
 }
+
+// ==================== CHANGE PASSWORD ====================
+window.openChangePasswordModal = () => {
+  const m = modal(`
+    <h3>Change Password</h3>
+    <form id="cpForm" class="form cols-1" style="margin-top:14px;">
+      <div><label>Current Password</label><input id="cp_current" type="password" required></div>
+      <div><label>New Password (min 8 chars, uppercase, lowercase, digit)</label><input id="cp_new" type="password" required></div>
+      <div><label>Confirm New Password</label><input id="cp_confirm" type="password" required></div>
+      <div id="cp_error" class="field-error"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="closeModal(this)">Cancel</button>
+        <button type="submit" class="btn green" id="cp_sub">Update Password</button>
+      </div>
+    </form>
+  `);
+  m.querySelector('#cpForm').onsubmit = async e => {
+    e.preventDefault();
+    const cur = m.querySelector('#cp_current').value;
+    const n1 = m.querySelector('#cp_new').value;
+    const n2 = m.querySelector('#cp_confirm').value;
+    const err = m.querySelector('#cp_error');
+    err.textContent = '';
+    if (n1 !== n2) { err.textContent = 'New passwords do not match'; return; }
+    const btn = m.querySelector('#cp_sub');
+    btn.disabled = true; btn.textContent = 'Updating...';
+    try {
+      await api('/api/users/change-password', { method: 'POST', body: JSON.stringify({ current_password: cur, new_password: n1 }) });
+      toast('Password updated successfully');
+      m.remove();
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false; btn.textContent = 'Update Password';
+    }
+  };
+};
+
+// ==================== DOCUMENT ATTACHMENTS ====================
+async function renderAttachmentWidget(entityType, entityId, containerEl) {
+  if (!containerEl) return;
+  containerEl.innerHTML = '<div class="loading">Loading attachments...</div>';
+  try {
+    const docs = await api(`/api/documents/${entityType}/${entityId}`);
+    containerEl.innerHTML = `
+      <div class="attachment-widget">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <b>📎 Documents & Attachments (${docs.length})</b>
+          <button class="btn sm" id="att_upload_btn">+ Attach File</button>
+        </div>
+        <div class="attachment-list">
+          ${docs.length ? docs.map(d => `
+            <div class="attachment-chip">
+              <div>
+                <b>${d.filename}</b> <small class="tag sm grey">${d.document_type}</small>
+                <span style="color:var(--muted);font-size:11px;margin-left:6px;">(${Math.round(d.size/1024)} KB)</span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <a href="/api/documents/${d.id}/download" class="btn sm ghost" download>⬇ Download</a>
+                <button class="btn sm ghost" style="color:var(--red);" onclick="deleteDocument(${d.id}, '${entityType}', ${entityId}, this)">✕</button>
+              </div>
+            </div>`).join('') : '<p style="font-size:12px;color:var(--muted);">No attachments uploaded yet.</p>'}
+        </div>
+      </div>`;
+
+    containerEl.querySelector('#att_upload_btn').onclick = () => {
+      const um = modal(`
+        <h3>Attach Document</h3>
+        <form id="docUpForm" class="form cols-1" style="margin-top:14px;">
+          <div>
+            <label>Document Type</label>
+            <select id="doc_type" required>
+              <option value="Agreement">Agreement</option>
+              <option value="Booking Receipt">Booking Receipt</option>
+              <option value="Farmer ID">Farmer ID</option>
+              <option value="Seed Challan">Seed Challan</option>
+              <option value="Payment Proof">Payment Proof</option>
+              <option value="Bardana Challan">Bardana Challan</option>
+              <option value="Gatepass">Gatepass</option>
+              <option value="9R">9R</option>
+              <option value="Transport Document">Transport Document</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div><label>File (PDF, PNG, JPG, Excel - max 10MB)</label><input type="file" id="doc_file" required></div>
+          <div><label>Notes</label><textarea id="doc_notes" placeholder="Optional notes..."></textarea></div>
+          <div id="doc_up_err" class="field-error"></div>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" onclick="closeModal(this)">Cancel</button>
+            <button type="submit" class="btn green" id="doc_up_sub">Upload</button>
+          </div>
+        </form>
+      `);
+
+      um.querySelector('#docUpForm').onsubmit = async e => {
+        e.preventDefault();
+        const fileInput = um.querySelector('#doc_file');
+        if (!fileInput.files.length) return;
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        fd.append('entity_type', entityType);
+        fd.append('entity_id', entityId);
+        fd.append('document_type', um.querySelector('#doc_type').value);
+        fd.append('notes', um.querySelector('#doc_notes').value);
+
+        const btn = um.querySelector('#doc_up_sub');
+        btn.disabled = true; btn.textContent = 'Uploading...';
+        try {
+          const res = await fetch('/api/documents/upload', { method: 'POST', body: fd });
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.detail || 'Upload failed');
+          }
+          toast('Document attached successfully');
+          um.remove();
+          renderAttachmentWidget(entityType, entityId, containerEl);
+        } catch (ex) {
+          um.querySelector('#doc_up_err').textContent = ex.message;
+          btn.disabled = false; btn.textContent = 'Upload';
+        }
+      };
+    };
+  } catch (ex) {
+    containerEl.innerHTML = `<p class="field-error">Failed to load attachments: ${ex.message}</p>`;
+  }
+}
+
+window.deleteDocument = async (id, entityType, entityId, btn) => {
+  if (!confirm('Are you sure you want to delete this document?')) return;
+  btn.disabled = true;
+  try {
+    await api(`/api/documents/${id}`, { method: 'DELETE' });
+    toast('Document deleted');
+    const container = btn.closest('.attachment-widget').parentElement;
+    renderAttachmentWidget(entityType, entityId, container);
+  } catch (ex) {
+    alert(ex.message);
+    btn.disabled = false;
+  }
+};
+
+// ==================== USER MANAGEMENT ====================
+async function usersPage() {
+  if (me && me.role !== 'admin') {
+    content().innerHTML = `<div class="panel"><p class="error">Access denied: User Management is restricted to Administrators.</p></div>`;
+    return;
+  }
+  const users = await api('/api/users');
+  content().innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div><h3>User Administration</h3><p>Manage system users, roles, active access, and passwords</p></div>
+        <button class="btn green" onclick="openCreateUserModal()">+ Add New User</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${users.map(u => `
+              <tr>
+                <td>${u.id}</td>
+                <td><b>${u.name}</b></td>
+                <td>${u.email}</td>
+                <td><span class="tag ${u.role === 'admin' ? 'blue' : 'grey'}">${u.role.toUpperCase()}</span></td>
+                <td><span class="tag ${u.active ? 'green' : 'red'}">${u.active ? 'Active' : 'Inactive'}</span></td>
+                <td>${u.last_login_at ? fmtDate(u.last_login_at) : 'Never'}</td>
+                <td style="display:flex;gap:6px;">
+                  <button class="btn sm ghost" onclick="openEditUserModal(${JSON.stringify(u).replace(/"/g, '&quot;')})">Edit</button>
+                  <button class="btn sm ghost" onclick="openResetPasswordModal(${u.id}, '${u.email}')">Reset PW</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+window.openCreateUserModal = () => {
+  const m = modal(`
+    <h3>Add New User</h3>
+    <form id="cuForm" class="form cols-2" style="margin-top:14px;">
+      <div><label>Full Name</label><input id="cu_name" required></div>
+      <div><label>Email Address</label><input id="cu_email" type="email" required></div>
+      <div>
+        <label>System Role</label>
+        <select id="cu_role" required>
+          <option value="operator">Operator / Booking</option>
+          <option value="seed">Seed Team</option>
+          <option value="bardana">Bardana Team</option>
+          <option value="qc">QC / Procurement (Dispatch)</option>
+          <option value="accounts">Accounts</option>
+          <option value="viewer">Viewer (Read-Only)</option>
+          <option value="admin">Administrator</option>
+        </select>
+      </div>
+      <div><label>Initial Password</label><input id="cu_password" type="password" required placeholder="Min 8 chars, 1 uppercase, 1 digit"></div>
+      <div id="cu_error" class="field-error full"></div>
+      <div class="modal-actions full">
+        <button type="button" class="btn ghost" onclick="closeModal(this)">Cancel</button>
+        <button type="submit" class="btn green" id="cu_sub">Create User</button>
+      </div>
+    </form>
+  `);
+  m.querySelector('#cuForm').onsubmit = async e => {
+    e.preventDefault();
+    const btn = m.querySelector('#cu_sub');
+    btn.disabled = true; btn.textContent = 'Creating...';
+    try {
+      await api('/api/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: m.querySelector('#cu_name').value,
+          email: m.querySelector('#cu_email').value,
+          role: m.querySelector('#cu_role').value,
+          password: m.querySelector('#cu_password').value
+        })
+      });
+      toast('User created successfully');
+      m.remove();
+      usersPage();
+    } catch (ex) {
+      m.querySelector('#cu_error').textContent = ex.message;
+      btn.disabled = false; btn.textContent = 'Create User';
+    }
+  };
+};
+
+window.openEditUserModal = u => {
+  const m = modal(`
+    <h3>Edit User: ${u.email}</h3>
+    <form id="euForm" class="form cols-1" style="margin-top:14px;">
+      <div><label>Full Name</label><input id="eu_name" value="${u.name}" required></div>
+      <div>
+        <label>System Role</label>
+        <select id="eu_role">
+          <option value="operator" ${u.role==='operator'?'selected':''}>Operator / Booking</option>
+          <option value="seed" ${u.role==='seed'?'selected':''}>Seed Team</option>
+          <option value="bardana" ${u.role==='bardana'?'selected':''}>Bardana Team</option>
+          <option value="qc" ${u.role==='qc'?'selected':''}>QC / Procurement (Dispatch)</option>
+          <option value="accounts" ${u.role==='accounts'?'selected':''}>Accounts</option>
+          <option value="viewer" ${u.role==='viewer'?'selected':''}>Viewer (Read-Only)</option>
+          <option value="admin" ${u.role==='admin'?'selected':''}>Administrator</option>
+        </select>
+      </div>
+      <div>
+        <label>Active Account</label>
+        <select id="eu_active">
+          <option value="true" ${u.active?'selected':''}>Active</option>
+          <option value="false" ${!u.active?'selected':''}>Deactivated / Suspended</option>
+        </select>
+      </div>
+      <div id="eu_error" class="field-error"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="closeModal(this)">Cancel</button>
+        <button type="submit" class="btn green" id="eu_sub">Save Changes</button>
+      </div>
+    </form>
+  `);
+  m.querySelector('#euForm').onsubmit = async e => {
+    e.preventDefault();
+    const btn = m.querySelector('#eu_sub');
+    btn.disabled = true; btn.textContent = 'Saving...';
+    try {
+      await api(`/api/users/${u.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: m.querySelector('#eu_name').value,
+          role: m.querySelector('#eu_role').value,
+          active: m.querySelector('#eu_active').value === 'true'
+        })
+      });
+      toast('User updated');
+      m.remove();
+      usersPage();
+    } catch (ex) {
+      m.querySelector('#eu_error').textContent = ex.message;
+      btn.disabled = false; btn.textContent = 'Save Changes';
+    }
+  };
+};
+
+window.openResetPasswordModal = (uid, email) => {
+  const m = modal(`
+    <h3>Reset Password for ${email}</h3>
+    <form id="rpForm" class="form cols-1" style="margin-top:14px;">
+      <div><label>New Temporary Password</label><input id="rp_new" type="password" required placeholder="Min 8 chars, 1 uppercase, 1 digit"></div>
+      <div id="rp_error" class="field-error"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="closeModal(this)">Cancel</button>
+        <button type="submit" class="btn green" id="rp_sub">Reset Password</button>
+      </div>
+    </form>
+  `);
+  m.querySelector('#rpForm').onsubmit = async e => {
+    e.preventDefault();
+    const btn = m.querySelector('#rp_sub');
+    btn.disabled = true; btn.textContent = 'Resetting...';
+    try {
+      await api(`/api/users/${uid}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ new_password: m.querySelector('#rp_new').value })
+      });
+      toast('Password reset successfully');
+      m.remove();
+    } catch (ex) {
+      m.querySelector('#rp_error').textContent = ex.message;
+      btn.disabled = false; btn.textContent = 'Reset Password';
+    }
+  };
+};
+
+// ==================== HISTORICAL EXCEL MIGRATION CENTER ====================
+let currentBatch = null;
+
+async function migrationPage() {
+  content().innerHTML = `
+    <div class="panel">
+      <div class="wizard-header">
+        <div class="wizard-step active" id="ws_1"><span class="step-num">1</span> Upload File</div>
+        <div class="wizard-step" id="ws_2"><span class="step-num">2</span> Map Columns</div>
+        <div class="wizard-step" id="ws_3"><span class="step-num">3</span> Staged Preview & Duplicates</div>
+        <div class="wizard-step" id="ws_4"><span class="step-num">4</span> Execution & Reconciliation</div>
+      </div>
+      <div id="migrationContent">
+        ${renderMigrationUploadStep()}
+      </div>
+    </div>`;
+  attachUploadHandlers();
+}
+
+function renderMigrationUploadStep() {
+  return `
+    <div style="max-width: 600px; margin: 20px auto; text-align: center;">
+      <h3>Upload Historical Excel Spreadsheet</h3>
+      <p style="color:var(--muted); font-size:13px; margin-bottom:20px;">
+        Support for historical booking registers, without-seed sheets, seed multiply lists, and dispatch logs.
+        Data is parsed safely into staging tables before any production changes.
+      </p>
+      <form id="migUploadForm" class="form cols-1" style="text-align: left; background:#faf9f2; padding:20px; border-radius:10px; border:1px solid var(--line);">
+        <div>
+          <label>Spreadsheet Category</label>
+          <select id="mig_source_type">
+            <option value="Booking">Farmer Booking Register (With / Without Seed)</option>
+            <option value="Without Seed">Without Seed Procurement Commitments</option>
+            <option value="Dispatch">Dispatch & Weighbridge Log</option>
+          </select>
+        </div>
+        <div>
+          <label>Excel File (.xlsx)</label>
+          <input type="file" id="mig_file" accept=".xlsx,.xlsm,.xltx" required>
+        </div>
+        <div>
+          <label>Batch Notes / Description</label>
+          <input id="mig_notes" placeholder="e.g. 2024-25 Season Historical Bookings">
+        </div>
+        <div id="mig_upload_err" class="field-error"></div>
+        <div style="margin-top:14px; text-align:right;">
+          <button type="submit" class="btn green" id="mig_up_sub">Next: Inspect Sheets & Map Columns →</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+function attachUploadHandlers() {
+  const form = document.getElementById('migUploadForm');
+  if (!form) return;
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const fInput = document.getElementById('mig_file');
+    if (!fInput.files.length) return;
+    const fd = new FormData();
+    fd.append('file', fInput.files[0]);
+    fd.append('source_type', document.getElementById('mig_source_type').value);
+    fd.append('notes', document.getElementById('mig_notes').value);
+
+    const btn = document.getElementById('mig_up_sub');
+    btn.disabled = true; btn.textContent = 'Uploading & Inspecting...';
+    try {
+      const res = await fetch('/api/migration/upload', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || 'Upload failed');
+      }
+      currentBatch = await res.json();
+      if (currentBatch.warning) toast(currentBatch.warning, 'error');
+      renderMigrationMappingStep();
+    } catch (ex) {
+      document.getElementById('mig_upload_err').textContent = ex.message;
+      btn.disabled = false; btn.textContent = 'Next: Inspect Sheets & Map Columns →';
+    }
+  };
+}
+
+function renderMigrationMappingStep() {
+  document.getElementById('ws_1').className = 'wizard-step completed';
+  document.getElementById('ws_2').className = 'wizard-step active';
+
+  const sheets = currentBatch.sheets || [];
+  const activeSheet = sheets[0] || '';
+  const headers = (currentBatch.sheet_headers && currentBatch.sheet_headers[activeSheet]) || [];
+  const suggested = currentBatch.suggested_mapping || {};
+
+  const targetFields = [
+    ['ignore', '-- Do Not Import / Ignore --'],
+    ['farmer_name', 'Farmer Name *'],
+    ['relation_name', 'Father / Husband Name'],
+    ['mobile', 'Mobile Number'],
+    ['village', 'Village'],
+    ['address', 'Full Address'],
+    ['agreement_no', 'Agreement Number'],
+    ['receipt_no', 'Receipt Number'],
+    ['acres', 'Total Acres *'],
+    ['variety', 'Potato Variety'],
+    ['seed_type', 'Seed Mode (With/Without)'],
+    ['seed_packets', 'Planned Seed Packets'],
+    ['contracted_bags', 'Contracted Bags *'],
+    ['contract_month', 'Contract Month'],
+    ['buyback_rate', 'Buyback Rate (₹/bag)'],
+    ['destination', 'Destination Storage/Plant'],
+    ['remarks', 'Remarks']
+  ];
+
+  document.getElementById('migrationContent').innerHTML = `
+    <div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <h3>Map Columns: ${currentBatch.filename} (${currentBatch.batch_code})</h3>
+        <p style="color:var(--muted); font-size:12px;">Review column headers detected from your Excel sheet and link them to Green Fay platform fields.</p>
+      </div>
+      <div>
+        <label style="display:inline; margin-right:6px;">Select Sheet:</label>
+        <select id="map_sheet_sel" style="width:auto; display:inline;">
+          ${sheets.map(s => `<option value="${s}" ${s === activeSheet ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="mapping-table">
+        <thead>
+          <tr>
+            <th style="width:35%;">Spreadsheet Column Header</th>
+            <th style="width:65%;">Green Fay Target Field</th>
+          </tr>
+        </thead>
+        <tbody id="mapping_tbody">
+          ${headers.map((h, idx) => `
+            <tr>
+              <td><b>${h}</b></td>
+              <td>
+                <select class="field-mapper" data-col="${h}">
+                  ${targetFields.map(([k, label]) => `
+                    <option value="${k}" ${suggested[h] === k ? 'selected' : ''}>${label}</option>
+                  `).join('')}
+                </select>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
+      <button class="btn ghost" onclick="migrationPage()">← Back to Upload</button>
+      <button class="btn green" id="map_submit_btn" onclick="submitBatchMapping()">Validate & Stage Rows →</button>
+    </div>`;
+}
+
+window.submitBatchMapping = async () => {
+  const sheet = document.getElementById('map_sheet_sel').value;
+  const mapping = {};
+  document.querySelectorAll('.field-mapper').forEach(sel => {
+    const col = sel.dataset.col;
+    const target = sel.value;
+    if (target && target !== 'ignore') {
+      mapping[col] = target;
+    }
+  });
+
+  const btn = document.getElementById('map_submit_btn');
+  btn.disabled = true; btn.textContent = 'Validating & Normalizing Rows...';
+
+  try {
+    const res = await api(`/api/migration/batches/${currentBatch.batch_id}/map`, {
+      method: 'POST',
+      body: JSON.stringify({ sheet_name: sheet, mapping: mapping })
+    });
+    toast(`Staged ${res.total_rows} rows (${res.valid_rows} valid, ${res.warning_rows} warnings)`);
+    renderMigrationPreviewStep();
+  } catch (ex) {
+    alert('Mapping error: ' + ex.message);
+    btn.disabled = false; btn.textContent = 'Validate & Stage Rows →';
+  }
+};
+
+async function renderMigrationPreviewStep() {
+  document.getElementById('ws_2').className = 'wizard-step completed';
+  document.getElementById('ws_3').className = 'wizard-step active';
+
+  const preview = await api(`/api/migration/batches/${currentBatch.batch_id}/preview?per_page=100`);
+  const b = preview.batch;
+  const items = preview.items || [];
+
+  document.getElementById('migrationContent').innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <div>
+        <h3>Staged Data Preview: ${b.batch_code}</h3>
+        <p style="color:var(--muted); font-size:12px;">Review normalized values, validation warnings, and duplicate farmer matches.</p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <span class="tag green">Valid: ${b.valid_rows}</span>
+        <span class="tag warn">Warnings: ${b.warning_rows}</span>
+        <span class="tag red">Errors: ${b.rejected_rows}</span>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="max-height:450px; overflow-y:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Row</th>
+            <th>Status</th>
+            <th>Farmer</th>
+            <th>Village</th>
+            <th>Mobile</th>
+            <th>Acres</th>
+            <th>Variety</th>
+            <th>Contract Bags</th>
+            <th>Duplicate Match</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(r => `
+            <tr>
+              <td>#${r.row_number}</td>
+              <td>${statusTag(r.status)}</td>
+              <td><b>${r.data.farmer_name || '—'}</b></td>
+              <td>${r.data.village || '—'}</td>
+              <td>${r.data.mobile || '—'}</td>
+              <td class="num">${num(r.data.acres)}</td>
+              <td>${r.data.variety || '—'}</td>
+              <td class="num">${num(r.data.contracted_bags)}</td>
+              <td>
+                ${r.match_farmer_name ? `
+                  <span class="tag ${r.match_confidence === 'Exact' ? 'warn' : 'grey'}">${r.match_confidence}</span>
+                  <div style="font-size:11px;">${r.match_farmer_name}</div>
+                ` : '<span style="color:var(--muted); font-size:11px;">New Farmer</span>'}
+              </td>
+              <td>
+                ${r.match_farmer_id ? `
+                  <select onchange="updateMatchDecision(${r.id}, this.value)">
+                    <option value="Link" ${r.match_decision === 'Link' ? 'selected' : ''}>Link Existing</option>
+                    <option value="Create" ${r.match_decision === 'Create' ? 'selected' : ''}>Create Separate</option>
+                    <option value="Ignore" ${r.match_decision === 'Ignore' ? 'selected' : ''}>Skip Row</option>
+                  </select>
+                ` : `
+                  <select onchange="updateMatchDecision(${r.id}, this.value)">
+                    <option value="Create" ${r.match_decision === 'Create' ? 'selected' : ''}>Create Farmer</option>
+                    <option value="Ignore" ${r.match_decision === 'Ignore' ? 'selected' : ''}>Skip Row</option>
+                  </select>
+                `}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
+      <button class="btn ghost" onclick="renderMigrationMappingStep()">← Modify Mapping</button>
+      <div>
+        <button class="btn green" id="exec_import_btn" onclick="executeBatchImport()">✓ Confirm & Import into Live Platform →</button>
+      </div>
+    </div>`;
+}
+
+window.updateMatchDecision = async (rowId, decision) => {
+  try {
+    await api(`/api/migration/batches/${currentBatch.batch_id}/resolve-farmer`, {
+      method: 'POST',
+      body: JSON.stringify({ row_id: rowId, decision: decision })
+    });
+    toast('Decision updated');
+  } catch (ex) {
+    alert(ex.message);
+  }
+};
+
+window.executeBatchImport = async () => {
+  if (!confirm('Are you ready to commit this batch to the operational database? This will create farmers, bookings, and commitments.')) return;
+  const btn = document.getElementById('exec_import_btn');
+  btn.disabled = true; btn.textContent = 'Importing Data into Production...';
+
+  try {
+    const res = await api(`/api/migration/batches/${currentBatch.batch_id}/execute`, { method: 'POST' });
+    toast('Batch imported successfully!');
+    renderMigrationReconciliationStep(res.reconciliation);
+  } catch (ex) {
+    alert('Import failed: ' + ex.message);
+    btn.disabled = false; btn.textContent = '✓ Confirm & Import into Live Platform →';
+  }
+};
+
+async function renderMigrationReconciliationStep(rec) {
+  document.getElementById('ws_3').className = 'wizard-step completed';
+  document.getElementById('ws_4').className = 'wizard-step active';
+
+  document.getElementById('migrationContent').innerHTML = `
+    <div style="max-width:700px; margin: 0 auto; text-align:center;">
+      <div style="font-size:48px; margin-bottom:10px;">🎉</div>
+      <h3>Import Completed Successfully!</h3>
+      <p style="color:var(--muted); font-size:13px; margin-bottom:24px;">All records have been committed in an isolated database transaction.</p>
+
+      <div class="panel" style="text-align:left; margin-bottom:24px;">
+        <h4 style="margin-bottom:14px;">Reconciliation Metrics</h4>
+        <div class="grid cards cols-2" style="margin-bottom:16px;">
+          <div class="card"><small>Imported Rows</small><strong>${rec.imported_rows}</strong></div>
+          <div class="card"><small>New Bookings Created</small><strong>${rec.new_bookings}</strong></div>
+          <div class="card"><small>New Farmers Created</small><strong>${rec.new_farmers}</strong></div>
+          <div class="card"><small>Existing Farmers Linked</small><strong>${rec.matched_farmers}</strong></div>
+          <div class="card"><small>Total Acres Added</small><strong>${num(rec.total_acres_imported)}</strong></div>
+          <div class="card"><small>Total Contract Bags</small><strong>${num(rec.total_bags_imported)}</strong></div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:center; gap:12px; margin-bottom:24px;">
+        <a class="btn green" href="/api/migration/batches/${currentBatch.batch_id}/reconciliation?format=xlsx" download>📊 Download Reconciliation XLSX</a>
+        <a class="btn" style="background:#d32f2f; color:white;" href="/api/migration/batches/${currentBatch.batch_id}/reconciliation?format=pdf" download>📄 Download Reconciliation PDF</a>
+      </div>
+
+      <div style="border-top:1px dashed var(--line); padding-top:20px; display:flex; justify-content:space-between;">
+        <button class="btn ghost" style="color:var(--red);" onclick="rollbackBatch(${currentBatch.batch_id})">⚠️ Rollback This Import</button>
+        <button class="btn green" onclick="page('bookings')">View Operational Bookings →</button>
+      </div>
+    </div>`;
+}
+
+window.rollbackBatch = async id => {
+  const reason = prompt('Are you sure you want to rollback all records created by this migration batch? Type "ROLLBACK" to confirm:');
+  if (reason !== 'ROLLBACK') return;
+  try {
+    await api(`/api/migration/batches/${id}/rollback`, { method: 'POST' });
+    toast('Batch rolled back successfully');
+    migrationPage();
+  } catch (ex) {
+    alert('Rollback failed: ' + ex.message);
+  }
+};
+

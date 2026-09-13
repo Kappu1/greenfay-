@@ -114,7 +114,27 @@ def run_migration():
 
         # TaxRate
         add_column_safe(conn, 'tax_rates', 'remarks TEXT')
-        
+
+        # Phase 3: Users
+        add_column_safe(conn, 'users', 'failed_login_attempts INTEGER DEFAULT 0')
+        add_column_safe(conn, 'users', 'locked_until DATETIME')
+        add_column_safe(conn, 'users', 'password_changed_at DATETIME')
+        add_column_safe(conn, 'users', 'must_change_password BOOLEAN DEFAULT 0')
+        add_column_safe(conn, 'users', 'last_login_at DATETIME')
+
+        # Phase 3: Seasons
+        add_column_safe(conn, 'seasons', "status VARCHAR(30) DEFAULT 'Open'")
+        add_column_safe(conn, 'seasons', 'locked_by_id INTEGER')
+        add_column_safe(conn, 'seasons', 'locked_at DATETIME')
+        add_column_safe(conn, 'seasons', 'lock_reason TEXT')
+
+        # Phase 3: Optimistic Concurrency version_id
+        add_column_safe(conn, 'bookings', 'version_id INTEGER DEFAULT 1')
+        add_column_safe(conn, 'commitments', 'version_id INTEGER DEFAULT 1')
+        add_column_safe(conn, 'seed_issues', 'version_id INTEGER DEFAULT 1')
+        add_column_safe(conn, 'seed_payments', 'version_id INTEGER DEFAULT 1')
+        add_column_safe(conn, 'bardana_issues', 'version_id INTEGER DEFAULT 1')
+        add_column_safe(conn, 'dispatches', 'version_id INTEGER DEFAULT 1')
     counts_after = {}
     with engine.connect() as conn:
         for t in tables_to_check:

@@ -1,0 +1,43 @@
+services:
+  web:
+    build: .
+    container_name: greenfay_web
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgresql+psycopg://greenfay_user:greenfay_secure_pass@db:5432/greenfay_db
+      - APP_SECRET=greenfay-prod-secret-replace-with-uuid-in-production
+      - INITIAL_ADMIN_PASSWORD=GF#Admin2026!Secure
+      - UPLOAD_DIR=/app/uploads
+      - BACKUP_DIR=/app/backups
+    volumes:
+      - uploads_data:/app/uploads
+      - backups_data:/app/backups
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: greenfay_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: greenfay_user
+      POSTGRES_PASSWORD: greenfay_secure_pass
+      POSTGRES_DB: greenfay_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U greenfay_user -d greenfay_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  uploads_data:
+  backups_data:

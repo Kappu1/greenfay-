@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from app.database import get_db
-from app.models import Dispatch, DispatchLine, TaxRate, Farmer, Commitment, BookingVariety
-from app.auth import current_user, audit, code
+from app.models import Dispatch, DispatchLine, TaxRate, Farmer, Commitment, BookingVariety, Booking
+from app.auth import current_user, require_roles, audit, code, check_season_unlocked
 from datetime import date, datetime
 
 router = APIRouter()
