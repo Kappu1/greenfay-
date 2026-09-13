@@ -17,7 +17,17 @@ from app.routers.reports import make_xlsx, make_pdf
 
 router = APIRouter()
 
-STAGING_DIR = os.getenv('UPLOAD_DIR', os.path.join(os.getcwd(), 'uploads', 'staging'))
+if os.getenv("VERCEL"):
+    STAGING_DIR = os.getenv(
+        "UPLOAD_DIR",
+        "/tmp/uploads/staging"
+    )
+else:
+    STAGING_DIR = os.getenv(
+        "UPLOAD_DIR",
+        os.path.join(os.getcwd(), "uploads", "staging")
+    )
+
 os.makedirs(STAGING_DIR, exist_ok=True)
 
 DEFAULT_TEMPLATES = {
